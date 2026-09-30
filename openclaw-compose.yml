@@ -1,0 +1,60 @@
+name: openclaw-portal
+services:
+  openclaw_portal:
+    image: python:3.11-slim
+    container_name: openclaw_portal
+    restart: unless-stopped
+    command:
+      - python3
+      - -m
+      - http.server
+      - "28086"
+      - -d
+      - /web
+    volumes:
+      - type: bind
+        source: /DATA/AppData/openclaw-portal
+        target: /web
+        read_only: true
+        bind:
+          create_host_path: true
+    ports:
+      - mode: ingress
+        target: 28086
+        published: "28086"
+        protocol: tcp
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+    x-casaos:
+      ports:
+        - container: "28086"
+          description:
+            en_US: OpenClaw launcher web UI
+      volumes:
+        - container: /web/index.html
+          description:
+            en_US: OpenClaw launcher page
+
+x-casaos:
+  architectures:
+    - amd64
+    - arm64
+  author: local
+  category: Utilities
+  description:
+    en_US: OpenClaw launcher page for CasaOS.
+  developer: local
+  icon: "data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 96'%3E%3Crect width='96' height='96' rx='20' fill='%230f172a'/%3E%3Ccircle cx='48' cy='48' r='18' fill='%2338bdf8'/%3E%3Cpath d='M48 20v56M20 48h56' stroke='%23e2e8f0' stroke-width='6' stroke-linecap='round'/%3E%3C/svg%3E"
+  id: org.local.openclaw.portal
+  is_uncontrolled: false
+  main: openclaw_portal
+  port_map: "28086"
+  store_app_id: openclaw-app
+  tagline:
+    en_US: OpenClaw
+  thumbnail: ""
+  title:
+    en_US: OpenClaw

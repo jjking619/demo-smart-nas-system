@@ -1,0 +1,6 @@
+[Unit]
+Description=Immich PostgreSQL backup
+
+[Service]
+Type=oneshot
+ExecStart=/home/pi/NAS-Demo/ops/scripts/immich_pg_backup.sh

@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Immich PostgreSQL backup daily
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=15m
+Persistent=true
+Unit=immich-pg-backup.service
+
+[Install]
+WantedBy=timers.target

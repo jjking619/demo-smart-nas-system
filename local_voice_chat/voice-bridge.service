@@ -1,0 +1,22 @@
+[Unit]
+Description=Voice Bridge (Wake->ASR->OpenClaw->TTS)
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=__RUN_USER__
+WorkingDirectory=__APP_DIR__/local_voice_chat
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-__APP_DIR__/.env
+# PulseAudio 预加载库（录音必需；/etc/environment 里也配置了，但 systemd 服务默认不读取该文件）
+Environment=LD_PRELOAD=/usr/lib/libpulse.so:/usr/lib/libpulse-mainloop-glib.so.0:/usr/lib/libpulse-mainloop-glib.so:/usr/lib/libpulse-simple.so:/usr/lib/pulseaudio/libpulsedsp.so:/usr/lib/pulseaudio/libpulsecommon-15.0.so:/usr/lib/pulseaudio/libpulsecore-15.0.so
+ExecStart=__PYTHON_BIN__ __APP_DIR__/local_voice_chat/voice_bridge.py --http-mode --http-trigger-host 0.0.0.0 --http-trigger-port 28082 --wake-duration 4 --asr-root __VOICE_SDK_BASE__/asr --tts-root __VOICE_SDK_BASE__/tts
+Restart=always
+RestartSec=3
+MemoryHigh=768M
+MemoryMax=1G
+
+[Install]
+WantedBy=multi-user.target

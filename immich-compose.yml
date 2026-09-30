@@ -1,0 +1,224 @@
+name: big-bear-immich
+services:
+    database:
+        container_name: immich-postgres
+        environment:
+            PG_DATA: /var/lib/postgresql/data
+            POSTGRES_DB: immich
+            POSTGRES_PASSWORD: casaos
+            POSTGRES_USER: casaos
+        image: ghcr.io/immich-app/postgres:14-vectorchord0.3.0-pgvectors0.2.0@sha256:c570d9e1c2494f65d2a0a379a7f6df66e8441964254a30aa62cc58e8ebf1dee0
+        labels:
+          icon: "data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 96'%3E%3Ccircle cx='48' cy='24' r='14' fill='%23ef4444'/%3E%3Ccircle cx='67' cy='38' r='14' fill='%23f59e0b'/%3E%3Ccircle cx='60' cy='61' r='14' fill='%2322c55e'/%3E%3Ccircle cx='36' cy='61' r='14' fill='%233b82f6'/%3E%3Ccircle cx='29' cy='38' r='14' fill='%23ec4899'/%3E%3Ccircle cx='48' cy='48' r='8' fill='%23ffffff'/%3E%3C/svg%3E"
+        networks:
+            big_bear_immich_network: null
+        restart: unless-stopped
+        volumes:
+            - type: bind
+              source: /DATA/AppData/big-bear-immich/pgdata
+              target: /var/lib/postgresql/data
+              bind:
+                create_host_path: true
+        logging:
+            driver: json-file
+            options:
+                max-size: "5m"
+                max-file: "3"
+        x-casaos:
+            envs:
+                - container: POSTGRES_PASSWORD
+                  description:
+                    en_US: 'Container Variable: POSTGRES_PASSWORD'
+                - container: POSTGRES_USER
+                  description:
+                    en_US: 'Container Variable: POSTGRES_USER'
+                - container: POSTGRES_DB
+                  description:
+                    en_US: 'Container Variable: POSTGRES_DB'
+                - container: PG_DATA
+                  description:
+                    en_US: 'Container Variable: PG_DATA'
+            volumes:
+                - container: /var/lib/postgresql/data
+                  description:
+                    en_US: 'Container Path: /var/lib/postgresql/data'
+    immich-machine-learning:
+        container_name: immich-machine-learning
+        # CLIP 推理峰值实测约 700MB，768m 已逼近上限；提到 1024m 防止被 OOM 终止。
+        mem_limit: 1024m
+        environment:
+            DB_DATABASE_NAME: casaos
+            DB_HOSTNAME: immich-postgres
+            DB_PASSWORD: casaos
+            DB_PORT: "5432"
+            DB_USERNAME: casaos
+            REDIS_HOSTNAME: immich-redis
+            MACHINE_LEARNING_MODEL_TTL: "600"
+            HF_ENDPOINT: "https://hf-mirror.com"
+        image: ghcr.io/immich-app/immich-machine-learning:v3.1.0@sha256:5a0839dc5303cd7215bcd2180a26aed3af41675aefb3e75e5157e9f10ad16e6e
+        labels:
+          icon: "data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 96'%3E%3Ccircle cx='48' cy='24' r='14' fill='%23ef4444'/%3E%3Ccircle cx='67' cy='38' r='14' fill='%23f59e0b'/%3E%3Ccircle cx='60' cy='61' r='14' fill='%2322c55e'/%3E%3Ccircle cx='36' cy='61' r='14' fill='%233b82f6'/%3E%3Ccircle cx='29' cy='38' r='14' fill='%23ec4899'/%3E%3Ccircle cx='48' cy='48' r='8' fill='%23ffffff'/%3E%3C/svg%3E"
+        networks:
+            big_bear_immich_network: null
+        restart: unless-stopped
+        volumes:
+            - type: bind
+              source: /DATA/AppData/big-bear-immich/model-cache
+              target: /cache
+              bind:
+                create_host_path: true
+        logging:
+            driver: json-file
+            options:
+                max-size: "5m"
+                max-file: "3"
+        x-casaos:
+            envs:
+                - container: DB_HOSTNAME
+                  description:
+                    en_US: 'Container Variable: DB_HOSTNAME'
+                - container: DB_USERNAME
+                  description:
+                    en_US: 'Container Variable: DB_USERNAME'
+                - container: DB_PASSWORD
+                  description:
+                    en_US: 'Container Variable: DB_PASSWORD'
+                - container: DB_DATABASE_NAME
+                  description:
+                    en_US: 'Container Variable: DB_DATABASE_NAME'
+                - container: DB_PORT
+                  description:
+                    en_US: 'Container Variable: DB_PORT'
+                - container: REDIS_HOSTNAME
+                  description:
+                    en_US: 'Container Variable: REDIS_HOSTNAME'
+                - container: MACHINE_LEARNING_MODEL_TTL
+                  description:
+                    en_US: 'Container Variable: MACHINE_LEARNING_MODEL_TTL'
+            volumes:
+                - container: /cache
+                  description:
+                    en_US: 'Container Path: /cache'
+    immich-server:
+        container_name: immich-server
+        depends_on:
+            database:
+                condition: service_started
+                required: true
+            redis:
+                condition: service_started
+                required: true
+        # 首次启动需导入约 22.7 万条 geodata + 跑 DB 迁移，实测峰值近 1GiB；
+        # 512m 会导致 Node worker 抛 ERR_WORKER_OUT_OF_MEMORY 并反复重启。
+        mem_limit: 1024m
+        environment:
+            DB_DATABASE_NAME: immich
+            DB_HOSTNAME: immich-postgres
+            DB_PASSWORD: casaos
+            DB_PORT: "5432"
+            DB_USERNAME: casaos
+            IMMICH_MACHINE_LEARNING_URL: http://immich-machine-learning:3003
+            REDIS_HOSTNAME: immich-redis
+        image: ghcr.io/immich-app/immich-server:v3.1.0@sha256:b434cb9287eea1471c9974845914d4dd328c9c2d652e446ed4930f99944f0ceb
+        labels:
+          icon: "data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 96'%3E%3Ccircle cx='48' cy='24' r='14' fill='%23ef4444'/%3E%3Ccircle cx='67' cy='38' r='14' fill='%23f59e0b'/%3E%3Ccircle cx='60' cy='61' r='14' fill='%2322c55e'/%3E%3Ccircle cx='36' cy='61' r='14' fill='%233b82f6'/%3E%3Ccircle cx='29' cy='38' r='14' fill='%23ec4899'/%3E%3Ccircle cx='48' cy='48' r='8' fill='%23ffffff'/%3E%3C/svg%3E"
+        networks:
+            big_bear_immich_network: null
+        ports:
+            - mode: ingress
+              target: 2283
+              published: "2283"
+              protocol: tcp
+        restart: unless-stopped
+        volumes:
+            - type: bind
+              source: /DATA/AppData/big-bear-immich/upload
+              target: /usr/src/app/upload
+              bind:
+                create_host_path: true
+            - type: bind
+              source: __NAS_ROOT__/Immich上传
+              target: /usr/src/app/upload/library
+              bind:
+                create_host_path: true
+            - type: bind
+              source: __NAS_ROOT__
+              target: /nas_share
+              bind:
+                create_host_path: true
+        logging:
+            driver: json-file
+            options:
+                max-size: "5m"
+                max-file: "3"
+        x-casaos:
+            envs:
+                - container: DB_HOSTNAME
+                  description:
+                    en_US: 'Container Variable: DB_HOSTNAME'
+                - container: DB_USERNAME
+                  description:
+                    en_US: 'Container Variable: DB_USERNAME'
+                - container: DB_PASSWORD
+                  description:
+                    en_US: 'Container Variable: DB_PASSWORD'
+                - container: DB_DATABASE_NAME
+                  description:
+                    en_US: 'Container Variable: DB_DATABASE_NAME'
+                - container: DB_PORT
+                  description:
+                    en_US: 'Container Variable: DB_PORT'
+                - container: REDIS_HOSTNAME
+                  description:
+                    en_US: 'Container Variable: REDIS_HOSTNAME'
+                - container: IMMICH_MACHINE_LEARNING_URL
+                  description:
+                    en_US: 'Container Variable: IMMICH_MACHINE_LEARNING_URL'
+            ports:
+                - container: "2283"
+                  description:
+                    en_US: 'Container Port: 2283'
+            volumes:
+                - container: /usr/src/app/upload
+                  description:
+                    en_US: 'Container Path: /usr/src/app/upload'
+                - container: /usr/src/app/upload/library
+                  description:
+                    en_US: 'Container Path: upload/library -> nas_share/Immich上传'
+    redis:
+        container_name: immich-redis
+        image: redis:6.2.20-alpine@sha256:2185e741f4c1e7b0ea9ca1e163a3767c4270a73086b6bbea2049a7203212fb7f
+        labels:
+          icon: "data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 96'%3E%3Ccircle cx='48' cy='24' r='14' fill='%23ef4444'/%3E%3Ccircle cx='67' cy='38' r='14' fill='%23f59e0b'/%3E%3Ccircle cx='60' cy='61' r='14' fill='%2322c55e'/%3E%3Ccircle cx='36' cy='61' r='14' fill='%233b82f6'/%3E%3Ccircle cx='29' cy='38' r='14' fill='%23ec4899'/%3E%3Ccircle cx='48' cy='48' r='8' fill='%23ffffff'/%3E%3C/svg%3E"
+        networks:
+            big_bear_immich_network: null
+        restart: always
+        logging:
+          driver: json-file
+          options:
+            max-size: "5m"
+            max-file: "3"
+networks:
+    big_bear_immich_network:
+        name: big-bear-immich_big_bear_immich_network
+        driver: bridge
+x-casaos:
+    architectures:
+        - amd64
+        - arm64
+    author: BigBearTechWorld
+    category: Media
+    description:
+        en_US: Self-hosted photo and video storage.
+    developer: immich-app
+    icon: "data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 96'%3E%3Ccircle cx='48' cy='24' r='14' fill='%23ef4444'/%3E%3Ccircle cx='67' cy='38' r='14' fill='%23f59e0b'/%3E%3Ccircle cx='60' cy='61' r='14' fill='%2322c55e'/%3E%3Ccircle cx='36' cy='61' r='14' fill='%233b82f6'/%3E%3Ccircle cx='29' cy='38' r='14' fill='%23ec4899'/%3E%3Ccircle cx='48' cy='48' r='8' fill='%23ffffff'/%3E%3C/svg%3E"
+    id: com.bigbeartechworld.immich
+    is_uncontrolled: false
+    main: immich-server
+    port_map: "2283"
+    store_app_id: big-bear-immich
+    tagline:
+        en_US: Immich
+    thumbnail: ""
+    title:
+        en_US: Immich

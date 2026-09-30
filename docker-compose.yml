@@ -1,0 +1,232 @@
+# =============================================================================
+# NAS-Demo 全家桶 compose
+# 用户只需在 .env 填写 OPENCLAW_MODEL_BASE_URL / OPENCLAW_MODEL_API_KEY
+# 其余服务（Immich/Jellyfin/知识库/下载器）随包部署并自动初始化。
+# =============================================================================
+
+services:
+  # ── AI 核心 ──────────────────────────────────────────────────────────────
+  openclaw:
+    image: openclaw/openclaw:2026.9.3@sha256:6cb72e1599b3b76e2ea3dcc2f4dd7f112247367fbecadfcdee8caa7423f4989b
+    platform: linux/arm64
+    container_name: openclaw
+    restart: unless-stopped
+    # 实测常驻 ~650MB 且随会话增长，768m 偏紧；1024m 留出余量避免 OOM。
+    mem_limit: 1024m
+    init: true
+    env_file:
+      - ./.env
+    networks:
+      - nas-net
+      - big_bear_immich_network
+    environment:
+      HOME: /home/node
+      OPENCLAW_HOME: /home/node
+      TERM: xterm-256color
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-casaos}
+      TZ: Asia/Shanghai
+      # 模型配置（由 init-openclaw.sh 写入配置，key 走环境变量）
+      OPENCLAW_MODEL_BASE_URL: ${OPENCLAW_MODEL_BASE_URL:-}
+      OPENCLAW_MODEL_API_KEY: ${OPENCLAW_MODEL_API_KEY:-}
+      OPENCLAW_MODEL_ID: ${OPENCLAW_MODEL_ID:-deepseek-chat}
+      # 其他服务地址（容器网络内自动解析）
+      IMMICH_URL: http://immich-server:2283
+      IMMICH_API_KEY: ${IMMICH_API_KEY:-}
+    command:
+      - /bin/bash
+      - -lc
+      - node dist/index.js gateway --bind lan --allow-unconfigured --port 18789
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    ports:
+      - "24190:18789"
+      - "18790:18790"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - bash -lc 'echo > /dev/tcp/127.0.0.1/18789'
+      interval: 300s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    volumes:
+      - /DATA/AppData/openclaw:/home/node/.openclaw
+      - ${NAS_ROOT:-/home/pi/nas_share}:/nas_share
+      - ./logs:/logs
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  # ── 媒体下载器 ───────────────────────────────────────────────────────────
+  media_downloader:
+    build:
+      context: ./media_downloader
+    container_name: media_downloader
+    restart: unless-stopped
+    networks:
+      - nas-net
+    environment:
+      DOWNLOAD_ROOT: /downloads
+      PORT: 8081
+      YTDLP_TIMEOUT_SEC: 1800
+      TTS_WEBHOOK_URL: ""
+      DOWNLOAD_TTS_TEXT: 下载已完成
+      LOG_FILE: /logs/media_downloader.log
+      LOG_MAX_BYTES: "5242880"
+      LOG_BACKUPS: "3"
+    volumes:
+      - ${NAS_ROOT:-/home/pi/nas_share}/downloads:/downloads
+      - ./logs:/logs
+    ports:
+      - "28081:8081"
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  # ── 知识库 ───────────────────────────────────────────────────────────────
+  knowledge_base:
+    build:
+      context: ./knowledge_base
+    container_name: knowledge_base
+    restart: unless-stopped
+    networks:
+      - nas-net
+    environment:
+      NAS_ROOT: /nas_share
+      PORT: 8084
+      SCAN_INTERVAL: 300
+      LOG_FILE: /logs/knowledge_base.log
+      LOG_MAX_BYTES: "5242880"
+      LOG_BACKUPS: "3"
+    volumes:
+      - ${NAS_ROOT:-/home/pi/nas_share}:/nas_share:ro
+      - ${NAS_ROOT:-/home/pi/nas_share}/knowledge_base_data:/data
+      - ./logs:/logs
+    ports:
+      - "28084:8084"
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  # ── Immich 智能相册（数据库/Redis/服务/机器学习）────────────────────────
+  immich-postgres:
+    container_name: immich-postgres
+    image: ghcr.io/immich-app/postgres:14-vectorchord0.3.0-pgvectors0.2.0@sha256:c570d9e1c2494f65d2a0a379a7f6df66e8441964254a30aa62cc58e8ebf1dee0
+    restart: unless-stopped
+    networks:
+      - nas-net
+    environment:
+      POSTGRES_USER: casaos
+      POSTGRES_PASSWORD: casaos
+      POSTGRES_DB: immich
+    volumes:
+      - /DATA/AppData/big-bear-immich/pgdata:/var/lib/postgresql/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  immich-redis:
+    container_name: immich-redis
+    image: redis:6.2.20-alpine
+    restart: always
+    networks:
+      - nas-net
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  immich-server:
+    container_name: immich-server
+    image: ghcr.io/immich-app/immich-server:v3.1.0@sha256:b434cb9287eea1471c9974845914d4dd328c9c2d652e446ed4930f99944f0ceb
+    restart: unless-stopped
+    # 首次启动需导入约 22.7 万条 geodata + 跑 DB 迁移，实测峰值近 1GiB；
+    # 512m 会导致 Node worker 抛 ERR_WORKER_OUT_OF_MEMORY 并反复重启。
+    mem_limit: 1024m
+    depends_on:
+      - immich-postgres
+      - immich-redis
+    networks:
+      - nas-net
+    environment:
+      DB_HOSTNAME: immich-postgres
+      DB_USERNAME: casaos
+      DB_PASSWORD: casaos
+      DB_DATABASE_NAME: immich
+      DB_PORT: "5432"
+      REDIS_HOSTNAME: immich-redis
+      IMMICH_MACHINE_LEARNING_URL: http://immich-machine-learning:3003
+      TZ: Asia/Shanghai
+    volumes:
+      - /DATA/AppData/big-bear-immich/upload:/usr/src/app/upload
+      - ${NAS_ROOT:-/home/pi/nas_share}/Immich上传:/usr/src/app/upload/library
+      - ${NAS_ROOT:-/home/pi/nas_share}:/nas_share
+    ports:
+      - "2283:2283"
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  immich-machine-learning:
+    container_name: immich-machine-learning
+    image: ghcr.io/immich-app/immich-machine-learning:v3.1.0@sha256:5a0839dc5303cd7215bcd2180a26aed3af41675aefb3e75e5157e9f10ad16e6e
+    restart: unless-stopped
+    # CLIP 推理峰值实测约 700MB，768m 已逼近上限；提到 1024m 防止被 OOM 终止。
+    mem_limit: 1024m
+    networks:
+      - nas-net
+    environment:
+      DB_HOSTNAME: immich-postgres
+      DB_USERNAME: casaos
+      DB_PASSWORD: casaos
+      DB_DATABASE_NAME: casaos
+      DB_PORT: "5432"
+      REDIS_HOSTNAME: immich-redis
+      MACHINE_LEARNING_MODEL_TTL: "600"
+    volumes:
+      - /DATA/AppData/big-bear-immich/model-cache:/cache
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  # ── Jellyfin 家庭影院 ────────────────────────────────────────────────────
+  jellyfin:
+    image: jellyfin/jellyfin:12.0@sha256:baba630419915985442f315f08b0cf46d9f4c8a0cc4bd38e94a6d35751dd5ef5
+    container_name: jellyfin
+    restart: unless-stopped
+    mem_limit: 512m
+    networks:
+      - nas-net
+    environment:
+      TZ: Asia/Shanghai
+    volumes:
+      - /DATA/AppData/jellyfin/config:/config
+      - /DATA/AppData/jellyfin/cache:/cache
+      - ${NAS_ROOT:-/home/pi/nas_share}/downloads:/media:ro
+    ports:
+      - "8096:8096"
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+networks:
+  nas-net:
+    driver: bridge
+  big_bear_immich_network:
+    external: true
+    name: big-bear-immich_big_bear_immich_network

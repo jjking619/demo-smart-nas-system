@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Docker prune weekly
+
+[Timer]
+OnCalendar=weekly
+RandomizedDelaySec=30m
+Persistent=true
+Unit=docker-prune-weekly.service
+
+[Install]
+WantedBy=timers.target

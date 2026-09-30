@@ -1,0 +1,7 @@
+[Unit]
+Description=Prune old Docker images and builder cache
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/docker image prune -af --filter until=168h
+ExecStart=/usr/bin/docker builder prune -af --filter until=168h
