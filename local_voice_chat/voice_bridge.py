@@ -313,8 +313,8 @@ def parse_args():
     )
     parser.add_argument(
         "--http-wakeword-prompt",
-        default="我在，请说。",
-        help="TTS prompt after wake-word in HTTP mode",
+        default=os.getenv("VOICE_HTTP_WAKEWORD_PROMPT", "我在，请说。I'm here, please speak."),
+        help="TTS prompt after wake-word in HTTP mode; supports bilingual prompts",
     )
     parser.add_argument(
         "--log-file",
